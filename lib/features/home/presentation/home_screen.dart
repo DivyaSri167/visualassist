@@ -34,7 +34,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       final speech = ref.read(speechEngineProvider);
       await speech.initialize();
 
-      speech.speakDirect('VisionAssist ready. Connecting to Smart-Cap camera.');
+      speech.speakDirect('Hello! Your AI assistant is ready. You can ask me about your surroundings.');
 
       // Preload YOLO11n model in background for fast inference
       ref.read(pipelineStateProvider.notifier).loadModel();
@@ -47,7 +47,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       if (!mounted) return;
 
       if (connected) {
-        speech.speakDirect('Smart-Cap camera connected. Object detection ready.');
+        speech.speakDirect('Smart-Cap camera is connected and ready.');
       } else {
         speech.speakDirect(
           'Camera disconnected or unavailable. Please verify Wi-Fi connection to VisionAssist-Cap.',

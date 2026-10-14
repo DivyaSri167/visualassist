@@ -48,6 +48,13 @@ class SpeechAnnouncementEngine {
   bool get isSpeaking => _isSpeaking;
   bool get isMuted => _isMuted;
   bool get isPaused => _isPaused;
+  void Function()? onSpeechComplete;
+
+  Future<void> setLanguage(String langCode) async {
+    try {
+      await _flutterTts.setLanguage(langCode);
+    } catch (_) {}
+  }
 
   Future<void> initialize() async {
     if (_isInitialized) return;
@@ -64,12 +71,20 @@ class SpeechAnnouncementEngine {
 
       _flutterTts.setCompletionHandler(() {
         _isSpeaking = false;
-        _processNextInQueue();
+        if (_queue.isNotEmpty) {
+          _processNextInQueue();
+        } else {
+          onSpeechComplete?.call();
+        }
       });
 
       _flutterTts.setErrorHandler((msg) {
         _isSpeaking = false;
-        _processNextInQueue();
+        if (_queue.isNotEmpty) {
+          _processNextInQueue();
+        } else {
+          onSpeechComplete?.call();
+        }
       });
 
       _flutterTts.setCancelHandler(() {
@@ -260,8 +275,11 @@ class SpeechAnnouncementEngine {
   Future<void> speakDirect(String message) async {
     if (_isMuted || _isPaused) return;
     try {
+      _isSpeaking = true;
       await _flutterTts.speak(message);
-    } catch (_) {}
+    } catch (_) {
+      _isSpeaking = false;
+    }
   }
 
   void pause() {

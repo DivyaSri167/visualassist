@@ -94,14 +94,14 @@ void main() {
         query: 'is there a person near me',
         detections: [personDet],
       );
-      expect(personAnswer, contains('Yes, a person is detected in front'));
+      expect(personAnswer.answer, contains('Yes, a person is detected in front'));
 
       final leftAnswer = VoiceQueryEngine.generateAnswer(
         intent: VoiceIntent.objectsOnLeft,
         query: 'what is on my left',
         detections: [chairDet],
       );
-      expect(leftAnswer, contains('On your left, there is chair'));
+      expect(leftAnswer.answer, contains('On your left, there is chair'));
     });
 
     test('generates helpful answers for step counts and device status', () {
@@ -111,8 +111,8 @@ void main() {
         sessionSteps: 1250,
         estimatedDistanceMeters: 875.0,
       );
-      expect(stepAnswer, contains('1250 steps'));
-      expect(stepAnswer, contains('0.88 kilometers'));
+      expect(stepAnswer.answer, contains('1250 steps'));
+      expect(stepAnswer.answer, contains('0.88 kilometers'));
 
       final statusAnswer = VoiceQueryEngine.generateAnswer(
         intent: VoiceIntent.deviceStatus,
@@ -120,8 +120,8 @@ void main() {
         isConnected: true,
         cameraFps: 12.5,
       );
-      expect(statusAnswer, contains('connected and operational'));
-      expect(statusAnswer, contains('12.5 frames per second'));
+      expect(statusAnswer.answer, contains('connected and operational'));
+      expect(statusAnswer.answer, contains('12.5 frames per second'));
     });
   });
 }

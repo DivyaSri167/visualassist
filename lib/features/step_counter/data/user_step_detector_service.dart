@@ -34,7 +34,6 @@ class UserStepDetectorService {
   // Peak detection constants
   static const double _minStepPeakThreshold = 1.25; // m/s^2 linear acceleration peak
   static const int _minStepIntervalMs = 260; // minimum ms between consecutive steps (~230 steps/min max)
-  static const int _maxStepIntervalMs = 2000; // maximum ms to maintain continuous cadence
 
   void _emit(UserStepCounterState newState) {
     _state = newState;
