@@ -78,8 +78,22 @@ class DetectedObject {
         normalizedYMax,
       );
 
-  /// Concise spoken announcement representation, e.g. "Person, left."
-  String get spokenAnnouncement => '$label, ${directionZone.spokenLabel}.';
+  /// Natural spoken announcement representation for assistive TTS,
+  /// e.g. "Person detected in front.", "Chair detected on your left.",
+  /// "Vehicle detected on your right.", "Stairs detected ahead. Please proceed carefully."
+  String get spokenAnnouncement {
+    final lower = label.toLowerCase();
+    if (lower == 'stairs') {
+      return 'Stairs detected ahead. Please proceed carefully.';
+    }
+    if (lower == 'car' || lower == 'truck' || lower == 'bus' || lower == 'motorcycle') {
+      return 'Vehicle detected ${directionZone.naturalSpokenLabel}.';
+    }
+    final formatted = label.isNotEmpty
+        ? '${label[0].toUpperCase()}${label.substring(1)}'
+        : label;
+    return '$formatted detected ${directionZone.naturalSpokenLabel}.';
+  }
 
   /// Detailed spoken announcement with fine-grained direction
   String getDetailedSpokenAnnouncement(DirectionClassifier classifier) {

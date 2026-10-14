@@ -6,12 +6,58 @@ import '../../../app/theme.dart';
 import '../../../shared/widgets/accessible_button.dart';
 import '../../../shared/widgets/status_badge.dart';
 import '../../device_connection/data/device_providers.dart';
+import '../../object_detection/data/object_detection_providers.dart';
 
-class HomeScreen extends ConsumerWidget {
+class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends ConsumerState<HomeScreen> {
+  bool _hasAutoConnected = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_hasAutoConnected && mounted) {
+        _hasAutoConnected = true;
+        _autoConnectAndInitialize();
+      }
+    });
+  }
+
+  Future<void> _autoConnectAndInitialize() async {
+    try {
+      final speech = ref.read(speechEngineProvider);
+      await speech.initialize();
+
+      speech.speakDirect('VisionAssist ready. Connecting to Smart-Cap camera.');
+
+      // Preload YOLO11n model in background for fast inference
+      ref.read(pipelineStateProvider.notifier).loadModel();
+
+      // Proactively connect to ESP32-CAM hardware
+      final connected = await ref
+          .read(deviceConnectionProvider.notifier)
+          .checkConnection();
+
+      if (!mounted) return;
+
+      if (connected) {
+        speech.speakDirect('Smart-Cap camera connected. Object detection ready.');
+      } else {
+        speech.speakDirect(
+          'Camera disconnected or unavailable. Please verify Wi-Fi connection to VisionAssist-Cap.',
+        );
+      }
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final connectionState = ref.watch(deviceConnectionProvider);
     final config = ref.watch(deviceConfigProvider);
 

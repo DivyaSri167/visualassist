@@ -1,6 +1,9 @@
+import 'dart:typed_data';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 
+import '../../camera/data/camera_providers.dart';
 import '../../device_connection/data/device_providers.dart';
 import '../domain/ocr_state.dart';
 import 'ocr_service.dart';
@@ -36,15 +39,22 @@ class OcrNotifier extends Notifier<OcrState> {
     } catch (_) {}
   }
 
-  /// Captures a still image from the ESP32-CAM and runs OCR on it.
+  /// Captures an image from the active stream or ESP32-CAM `/capture` endpoint and runs OCR on it.
   Future<void> captureAndRead() async {
     state = state.copyWith(phase: OcrPhase.capturing, clearResult: true, clearError: true);
 
     try {
-      final repository = ref.read(deviceRepositoryProvider);
-      final bytes = await repository.captureStillImage(
-        timeout: const Duration(seconds: 8),
-      );
+      // 1. Prefer the latest live frame from the active stream if running
+      final streamService = ref.read(cameraStreamServiceProvider);
+      Uint8List? bytes = streamService.currentState.currentFrame?.bytes;
+
+      // 2. If stream is not active, capture a high-res frame via /capture
+      if (bytes == null || bytes.isEmpty) {
+        final repository = ref.read(deviceRepositoryProvider);
+        bytes = await repository.captureStillImage(
+          timeout: const Duration(seconds: 8),
+        );
+      }
 
       state = state.copyWith(phase: OcrPhase.processing, capturedBytes: bytes);
 
@@ -64,6 +74,12 @@ class OcrNotifier extends Notifier<OcrState> {
         phase: OcrPhase.error,
         errorMessage: message,
       );
+      if (_ttsReady) {
+        try {
+          await _tts.stop();
+          await _tts.speak(message);
+        } catch (_) {}
+      }
     }
   }
 

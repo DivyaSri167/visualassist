@@ -102,8 +102,12 @@ class SpeechAnnouncementEngine {
       if (trackId == null) continue;
 
       final track = activeTracks[trackId];
-      if (track == null || !track.isReliable) {
-        // Wait until track is confirmed over >= 2 frames to avoid phantom announcements
+      // Object is eligible if tracked for >=2 frames OR if high-confidence/hazard class
+      final isEligible = track != null &&
+          (track.isReliable ||
+              det.confidence >= 0.50 ||
+              YoloConfig.isHazardClass(det.label));
+      if (!isEligible) {
         continue;
       }
 
@@ -119,7 +123,7 @@ class SpeechAnnouncementEngine {
           // Mode A: Only announce validated hazard classes
           if (!YoloConfig.isHazardClass(det.label)) continue;
 
-          if (isNew || zoneChanged || (cooldownExpired && track.isApproaching)) {
+          if (isNew || (cooldownExpired && track.isApproaching)) {
             final priority = track.isApproaching
                 ? AnnouncementPriority.urgent
                 : AnnouncementPriority.elevated;
@@ -129,14 +133,28 @@ class SpeechAnnouncementEngine {
               trackId: trackId,
               zone: det.directionZone,
             );
+          } else if (zoneChanged) {
+            _enqueue(
+              message: '${_capitalize(det.label)} now ${det.directionZone.naturalSpokenLabel}.',
+              priority: AnnouncementPriority.elevated,
+              trackId: trackId,
+              zone: det.directionZone,
+            );
           }
           break;
 
         case AnnouncementMode.allObjects:
           // Mode B: Announce all sufficiently confident objects with deduplication
-          if (isNew || (cooldownExpired && zoneChanged)) {
+          if (isNew || cooldownExpired) {
             _enqueue(
               message: det.spokenAnnouncement,
+              priority: AnnouncementPriority.routine,
+              trackId: trackId,
+              zone: det.directionZone,
+            );
+          } else if (zoneChanged) {
+            _enqueue(
+              message: '${_capitalize(det.label)} now ${det.directionZone.naturalSpokenLabel}.',
               priority: AnnouncementPriority.routine,
               trackId: trackId,
               zone: det.directionZone,
@@ -150,7 +168,7 @@ class SpeechAnnouncementEngine {
           final isHazard = YoloConfig.isHazardClass(det.label);
 
           if (isCenter && (isNew || cooldownExpired || track.isApproaching)) {
-            // Immediate attention for path obstacles
+            // Immediate attention for center path obstacles
             final priority = isHazard
                 ? AnnouncementPriority.urgent
                 : AnnouncementPriority.elevated;
@@ -169,7 +187,7 @@ class SpeechAnnouncementEngine {
             );
           } else if (zoneChanged && (isCenter || isHazard)) {
             _enqueue(
-              message: '${det.label} now ${det.directionZone.spokenLabel}.',
+              message: '${_capitalize(det.label)} now ${det.directionZone.naturalSpokenLabel}.',
               priority: AnnouncementPriority.elevated,
               trackId: trackId,
               zone: det.directionZone,
@@ -178,6 +196,11 @@ class SpeechAnnouncementEngine {
           break;
       }
     }
+  }
+
+  static String _capitalize(String s) {
+    if (s.isEmpty) return s;
+    return '${s[0].toUpperCase()}${s.substring(1)}';
   }
 
   void _enqueue({

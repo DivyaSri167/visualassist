@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:pedometer/pedometer.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 
 import '../domain/user_step_counter_state.dart';
@@ -24,15 +25,16 @@ class UserStepDetectorService {
   int? _nativeStepBaseline;
 
   // Accelerometer algorithm parameters
-  final List<double> _magnitudeHistory = [];
+  final List<double> _magnitudeBuffer = [];
   final List<DateTime> _recentStepTimestamps = [];
-  double _smoothMagnitude = 0.0;
-  bool _peakArmed = false;
+  double _prevMagnitude = 0.0;
+  double _prevPrevMagnitude = 0.0;
   DateTime _lastStepDetectedAt = DateTime.fromMillisecondsSinceEpoch(0);
 
   // Peak detection constants
-  static const double _stepThreshold = 2.1; // m/s^2 above resting gravity baseline
-  static const int _refractoryPeriodMs = 280; // minimum ms between consecutive steps
+  static const double _minStepPeakThreshold = 1.25; // m/s^2 linear acceleration peak
+  static const int _minStepIntervalMs = 260; // minimum ms between consecutive steps (~230 steps/min max)
+  static const int _maxStepIntervalMs = 2000; // maximum ms to maintain continuous cadence
 
   void _emit(UserStepCounterState newState) {
     _state = newState;
@@ -78,8 +80,26 @@ class UserStepDetectorService {
     });
   }
 
-  void _initSensors() {
+  Future<void> _initSensors() async {
     _nativeStepBaseline = null;
+
+    bool hasPermission = true;
+    try {
+      final status = await Permission.activityRecognition.status;
+      if (!status.isGranted) {
+        final requested = await Permission.activityRecognition.request();
+        hasPermission = requested.isGranted;
+      }
+    } catch (_) {
+      // In testing environments or desktop, continue gracefully
+    }
+
+    if (!hasPermission) {
+      _startAccelerometerFallback(
+        'Activity recognition permission not granted. Using phone accelerometer fallback.',
+      );
+      return;
+    }
 
     try {
       // Attempt native Android Pedometer stream
@@ -91,7 +111,9 @@ class UserStepDetectorService {
           // Hardware step sensor unavailable or permission denied: fallback to accelerometer
           _pedometerSubscription?.cancel();
           _pedometerSubscription = null;
-          _startAccelerometerFallback('Native pedometer sensor unavailable ($error). Using phone accelerometer.');
+          _startAccelerometerFallback(
+            'Native pedometer sensor unavailable ($error). Using phone accelerometer.',
+          );
         },
         cancelOnError: true,
       );
@@ -153,7 +175,7 @@ class UserStepDetectorService {
     }
   }
 
-  /// Gravity-aware linear acceleration filtering and refractory peak detection
+  /// Gravity-aware linear acceleration filtering and robust peak detection
   void _processAccelerometerEvent(UserAccelerometerEvent event) {
     if (_state.isPaused || !_state.isTracking) return;
 
@@ -162,37 +184,42 @@ class UserStepDetectorService {
       event.x * event.x + event.y * event.y + event.z * event.z,
     );
 
-    // Exponential moving average filter (alpha = 0.25)
-    _smoothMagnitude = 0.25 * rawMagnitude + 0.75 * _smoothMagnitude;
-
-    final now = DateTime.now();
-
-    // Peak detection with refractory suppression
-    if (_smoothMagnitude > _stepThreshold) {
-      if (!_peakArmed) {
-        final elapsedSinceLastStep =
-            now.difference(_lastStepDetectedAt).inMilliseconds;
-
-        if (elapsedSinceLastStep >= _refractoryPeriodMs) {
-          _lastStepDetectedAt = now;
-          _peakArmed = true;
-
-          final newCount = _state.sessionSteps + 1;
-          _recentStepTimestamps.add(now);
-
-          _emit(
-            _state.copyWith(
-              sessionSteps: newCount,
-              totalSensorSteps: _state.totalSensorSteps + 1,
-              signalQuality: StepSignalQuality.medium,
-            ),
-          );
-        }
-      }
-    } else if (_smoothMagnitude < _stepThreshold * 0.5) {
-      // Reset trigger when acceleration dips below reset threshold
-      _peakArmed = false;
+    // Keep circular buffer of last 12 samples to calculate local baseline
+    _magnitudeBuffer.add(rawMagnitude);
+    if (_magnitudeBuffer.length > 12) {
+      _magnitudeBuffer.removeAt(0);
     }
+
+    // Adaptive local peak detection: check if previous sample is a local maximum
+    // (i.e. _prevMagnitude is strictly higher than both _prevPrevMagnitude and rawMagnitude)
+    final isLocalPeak = _prevMagnitude > _prevPrevMagnitude &&
+        _prevMagnitude > rawMagnitude &&
+        _prevMagnitude >= _minStepPeakThreshold;
+
+    if (isLocalPeak) {
+      final now = DateTime.now();
+      final elapsedSinceLastStep =
+          now.difference(_lastStepDetectedAt).inMilliseconds;
+
+      if (elapsedSinceLastStep >= _minStepIntervalMs) {
+        _lastStepDetectedAt = now;
+
+        final newCount = _state.sessionSteps + 1;
+        _recentStepTimestamps.add(now);
+
+        _emit(
+          _state.copyWith(
+            sessionSteps: newCount,
+            totalSensorSteps: _state.totalSensorSteps + 1,
+            signalQuality: StepSignalQuality.medium,
+            sensorDiagnosticMessage: 'Accelerometer Step Detector Active',
+          ),
+        );
+      }
+    }
+
+    _prevPrevMagnitude = _prevMagnitude;
+    _prevMagnitude = rawMagnitude;
   }
 
   void _calculateCadence() {
@@ -226,9 +253,9 @@ class UserStepDetectorService {
     _durationTimer?.cancel();
     _nativeStepBaseline = null;
     _recentStepTimestamps.clear();
-    _magnitudeHistory.clear();
-    _smoothMagnitude = 0.0;
-    _peakArmed = false;
+    _magnitudeBuffer.clear();
+    _prevMagnitude = 0.0;
+    _prevPrevMagnitude = 0.0;
 
     _emit(
       _state.copyWith(

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:speech_to_text/speech_to_text.dart';
 
 import '../../../app/theme.dart';
 import '../../../shared/widgets/accessible_button.dart';
@@ -8,6 +9,7 @@ import '../../device_connection/data/device_providers.dart';
 import '../../object_detection/data/object_detection_providers.dart';
 import '../../object_detection/data/yolo_config.dart';
 import '../../scene_understanding/data/scene_providers.dart';
+import '../../text_reader/data/ocr_providers.dart';
 import '../data/voice_query_engine.dart';
 
 class VoiceAssistantScreen extends ConsumerStatefulWidget {
@@ -26,8 +28,65 @@ class _VoiceAssistantScreenState extends ConsumerState<VoiceAssistantScreen> {
   final TextEditingController _queryController = TextEditingController();
   final List<({VoiceIntent intent, String query})> _queryHistory = [];
 
+  final SpeechToText _speechToText = SpeechToText();
+  bool _speechEnabled = false;
+  bool _isListening = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initSpeech();
+  }
+
+  void _initSpeech() async {
+    try {
+      _speechEnabled = await _speechToText.initialize(
+        onError: (_) => setState(() => _isListening = false),
+        onStatus: (status) {
+          if (status == 'done' || status == 'notListening') {
+            setState(() => _isListening = false);
+          }
+        },
+      );
+      if (mounted) setState(() {});
+    } catch (_) {}
+  }
+
+  void _startListening(dynamic speechEngine) async {
+    if (!_speechEnabled) {
+      _initSpeech();
+    }
+    // Stop any active TTS audio before listening to avoid echo
+    speechEngine.stop();
+    setState(() => _isListening = true);
+
+    try {
+      await _speechToText.listen(
+        onResult: (result) {
+          if (result.recognizedWords.isNotEmpty) {
+            _queryController.text = result.recognizedWords;
+            if (result.finalResult) {
+              setState(() => _isListening = false);
+              _handleQuery(result.recognizedWords, speechEngine);
+            }
+          }
+        },
+        listenFor: const Duration(seconds: 10),
+        pauseFor: const Duration(seconds: 3),
+      );
+    } catch (_) {
+      setState(() => _isListening = false);
+    }
+  }
+
+  void _stopListening() async {
+    await _speechToText.stop();
+    setState(() => _isListening = false);
+  }
+
   @override
   void dispose() {
+    _speechToText.stop();
     _testTextController.dispose();
     _queryController.dispose();
     super.dispose();
@@ -310,6 +369,9 @@ class _VoiceAssistantScreenState extends ConsumerState<VoiceAssistantScreen> {
       case VoiceIntent.stopSpeech:
         speechEngine.stop();
         return;
+      case VoiceIntent.readText:
+        ref.read(ocrProvider.notifier).captureAndRead();
+        return;
       case VoiceIntent.describeScene:
         ref.read(sceneUnderstandingProvider.notifier).captureAndDescribe();
         return;
@@ -323,11 +385,16 @@ class _VoiceAssistantScreenState extends ConsumerState<VoiceAssistantScreen> {
         break;
     }
 
-    // Generate a spoken answer for intents handled by the engine
+    // Generate a spoken answer for intents handled by the engine grounded in camera detections
     final stepState = ref.read(userStepStateProvider).value;
     final connectionState = ref.read(deviceConnectionProvider);
     final sceneState = ref.read(sceneUnderstandingProvider);
     final streamState = ref.read(cameraStreamServiceProvider).currentState;
+    final pipeline = ref.read(pipelineStateProvider);
+
+    final detections = pipeline.currentDetections.isNotEmpty
+        ? pipeline.currentDetections
+        : sceneState.detections;
 
     final answer = VoiceQueryEngine.generateAnswer(
       intent: intent,
@@ -339,6 +406,7 @@ class _VoiceAssistantScreenState extends ConsumerState<VoiceAssistantScreen> {
       sceneSummary: sceneState.narration,
       environmentName: sceneState.synthesis?.environment.displayName,
       pathClearanceText: sceneState.synthesis?.clearance.description,
+      detections: detections,
     );
     speechEngine.speakDirect(answer);
   }
@@ -359,7 +427,7 @@ class _VoiceAssistantScreenState extends ConsumerState<VoiceAssistantScreen> {
               Icon(Icons.chat_bubble_outline, color: AppTheme.primaryAmber, size: 20),
               SizedBox(width: 8),
               Text(
-                'Natural Language Query',
+                'Natural Language Voice Assistant',
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
@@ -370,8 +438,25 @@ class _VoiceAssistantScreenState extends ConsumerState<VoiceAssistantScreen> {
           ),
           const SizedBox(height: 6),
           const Text(
-            'Ask anything about your surroundings, path, steps, or device.',
+            'Ask questions using your voice or type below about your surroundings, text, obstacles, or steps.',
             style: TextStyle(fontSize: 12, color: AppTheme.secondaryText),
+          ),
+          const SizedBox(height: 14),
+          // Prominent Accessible Microphone Voice Button
+          AccessibleButton(
+            label: _isListening ? 'Listening… Tap to Stop' : 'Tap to Speak (Voice Command)',
+            icon: _isListening ? Icons.mic : Icons.mic_none,
+            isPrimary: _isListening,
+            customColor: _isListening ? AppTheme.errorRed : AppTheme.primaryAmber,
+            customTextColor: Colors.black,
+            semanticHint: 'Activates microphone for hands-free voice questions',
+            onPressed: () {
+              if (_isListening) {
+                _stopListening();
+              } else {
+                _startListening(speechEngine);
+              }
+            },
           ),
           const SizedBox(height: 12),
           Row(
@@ -382,7 +467,7 @@ class _VoiceAssistantScreenState extends ConsumerState<VoiceAssistantScreen> {
                   style: const TextStyle(color: AppTheme.highContrastText),
                   onSubmitted: (v) => _handleQuery(v, speechEngine),
                   decoration: InputDecoration(
-                    hintText: 'e.g. "What is ahead of me?"',
+                    hintText: 'e.g. "What is in front of me?"',
                     hintStyle: const TextStyle(color: AppTheme.secondaryText),
                     filled: true,
                     fillColor: AppTheme.darkBackground,
@@ -411,16 +496,18 @@ class _VoiceAssistantScreenState extends ConsumerState<VoiceAssistantScreen> {
             ],
           ),
           // Query quick hints
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           Wrap(
             spacing: 6,
             runSpacing: 6,
             children: [
-              _QueryChip(label: 'What is ahead?', onTap: () => _handleQuery('What is in front of me?', speechEngine)),
+              _QueryChip(label: 'What is in front of me?', onTap: () => _handleQuery('What is in front of me?', speechEngine)),
+              _QueryChip(label: 'What is written on this board?', onTap: () => _handleQuery('What is written on this board?', speechEngine)),
+              _QueryChip(label: 'Is there a person near me?', onTap: () => _handleQuery('Is there a person near me?', speechEngine)),
+              _QueryChip(label: 'What objects on my left?', onTap: () => _handleQuery('What objects are on my left?', speechEngine)),
+              _QueryChip(label: 'Describe my surroundings', onTap: () => _handleQuery('Describe my surroundings.', speechEngine)),
               _QueryChip(label: 'Is path clear?', onTap: () => _handleQuery('Can I walk ahead?', speechEngine)),
-              _QueryChip(label: 'Where am I?', onTap: () => _handleQuery('Where am I?', speechEngine)),
               _QueryChip(label: 'Step count', onTap: () => _handleQuery('How many steps?', speechEngine)),
-              _QueryChip(label: 'Camera status', onTap: () => _handleQuery('Camera connection status', speechEngine)),
             ],
           ),
           // Recent query history
@@ -479,6 +566,9 @@ class _VoiceAssistantScreenState extends ConsumerState<VoiceAssistantScreen> {
       case VoiceIntent.describeScene: return Icons.visibility;
       case VoiceIntent.readText: return Icons.text_fields;
       case VoiceIntent.checkPath: return Icons.straight;
+      case VoiceIntent.personNearby: return Icons.person;
+      case VoiceIntent.objectsOnLeft: return Icons.arrow_back;
+      case VoiceIntent.objectsOnRight: return Icons.arrow_forward;
       case VoiceIntent.whereAmI: return Icons.place;
       case VoiceIntent.stepCount: return Icons.directions_walk;
       case VoiceIntent.deviceStatus: return Icons.wifi;

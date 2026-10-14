@@ -12,19 +12,29 @@ class OcrService {
 
   bool _disposed = false;
 
-  /// Runs OCR on raw JPEG [bytes] (from the ESP32-CAM `/capture` endpoint).
-  /// Writes bytes to a temp file (ML Kit requires file-path input on Android),
-  /// processes recognition, then deletes the temp file.
+  /// Runs OCR on raw JPEG [bytes] (from the ESP32-CAM stream or `/capture` endpoint).
+  /// Validates image data, writes bytes to a temp file, runs on-device recognition,
+  /// and guarantees cleanup.
   Future<OcrResult> recognizeFromJpeg(Uint8List bytes) async {
     if (_disposed) throw StateError('OcrService has been disposed.');
+
+    if (bytes.length < 50) {
+      throw const FormatException('Captured frame contains insufficient data for OCR.');
+    }
+
+    // Verify JPEG magic bytes (0xFF, 0xD8)
+    if (bytes[0] != 0xFF || bytes[1] != 0xD8) {
+      throw const FormatException('Invalid image format: frame is not a valid JPEG.');
+    }
 
     final tempDir = Directory.systemTemp;
     final tempFile = File(
       '${tempDir.path}/ocr_capture_${DateTime.now().millisecondsSinceEpoch}.jpg',
     );
-    await tempFile.writeAsBytes(bytes);
 
     try {
+      await tempFile.writeAsBytes(bytes, flush: true);
+
       final inputImage = InputImage.fromFilePath(tempFile.path);
       final recognizedText = await _recognizer.processImage(inputImage);
 
@@ -48,9 +58,19 @@ class OcrService {
         blocks: blocks,
         timestamp: DateTime.now(),
       );
+    } catch (e) {
+      final s = e.toString().toLowerCase();
+      if (s.contains('waiting for the text recognition model') || s.contains('model to be downloaded')) {
+        throw Exception(
+          'ML Kit OCR model is downloading in the background. Please ensure internet access on first setup, then retry.',
+        );
+      }
+      rethrow;
     } finally {
       try {
-        await tempFile.delete();
+        if (await tempFile.exists()) {
+          await tempFile.delete();
+        }
       } catch (_) {}
     }
   }

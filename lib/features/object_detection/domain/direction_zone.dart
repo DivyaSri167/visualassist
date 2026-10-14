@@ -28,6 +28,17 @@ extension DirectionZoneX on DirectionZone {
         return 'right';
     }
   }
+
+  String get naturalSpokenLabel {
+    switch (this) {
+      case DirectionZone.left:
+        return 'on your left';
+      case DirectionZone.center:
+        return 'in front';
+      case DirectionZone.right:
+        return 'on your right';
+    }
+  }
 }
 
 /// Computes horizontal direction zone from normalized X coordinate (0.0 to 1.0).
