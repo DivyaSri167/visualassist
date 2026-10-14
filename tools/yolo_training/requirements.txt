@@ -1,0 +1,14 @@
+# YOLO11n Training & TFLite Export Pipeline Dependencies
+# Requires Python 3.10 or 3.11 for onnx2tf compatibility
+
+ultralytics>=8.3.0
+onnx>=1.15.0
+onnx2tf>=1.25.0
+tensorflow>=2.16.1
+onnxruntime>=1.18.0
+pillow>=10.0.0
+numpy>=1.26.0
+pyyaml>=6.0
+sng4onnx>=1.0.1
+onnx-graphsurgeon>=0.5.2
+tflite-support>=0.4.4
