@@ -31,12 +31,12 @@ android {
 
     buildTypes {
         release {
-            // Signing with the debug keys so it installs immediately on any physical device
             signingConfig = signingConfigs.getByName("debug")
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
+            isMinifyEnabled = false
+            isShrinkResources = false
+        }
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 }

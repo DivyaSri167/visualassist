@@ -7,6 +7,11 @@ import 'app/app.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+    debugPrint('Flutter Startup Error: ${details.exception}');
+  };
+
   // Set system UI overlay style for dark high-contrast mode
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
